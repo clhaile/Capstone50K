@@ -60,7 +60,7 @@ adult <- read_csv("C:/Users/haile/Desktop/DS_Capstone/adult.csv")
 ```
 # Introduction
 
-The purpose of this project is to create several classifcation models for data related to individual income level.  In particular, we will consider numerical and categorical predictors for the outcome variable "income", which is binary with levels under/over \$50000.  We will use the data set "adult.csv".
+The purpose of this project is to create several classifcation models for data related to individual income level.  In particular, we will consider numerical and categorical predictors for the outcome variable "income", which is binary with levels under/over \$50000.  We will use the data set "adult.csv".  We derive three common classification models:  Binary Logistic Regression through the glm function, K nearest neighbors through the knn function, and Random Forest.  The Random Forest produces the greatest overall accuracy while the glm has the highest area under the ROC curve.
 
 This is an extraction of 32,561 responses from the 1994 US Census data taken from the Kaggle list of curated datasets at https://www.kaggle.com/uciml/adult-census-income.
 
