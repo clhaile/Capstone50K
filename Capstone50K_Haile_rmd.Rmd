@@ -1,0 +1,481 @@
+---
+title: '"Classifying income as over/under $50k per year"'
+author: "Craig Haile"
+date: "September 1, 2019"
+output: pdf_document
+---
+
+In partial fulfillment of the requirements of HarvardX: PH125.9x Data Science Capstone
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r preamble, echo=FALSE,warning=FALSE, results='hide',message=FALSE}
+# Preamble items
+# Install standard packages if not present
+if(!require(tidyverse)) install.packages("tidyverse") 
+if(!require(caret)) install.packages("caret")
+if(!require(dslabs)) install.packages("dslabs")
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(pdftools)) install.packages("pdftools")
+if(!require(lubridate)) install.packages("lubridate")
+if(!require(matrixStats)) install.packages("matrixStats")
+if(!require(data.table)) install.packages("data.table")
+if(!require(data.table)) install.packages("forcats")
+if(!require(InformationValue)) install.packages("InformationValue")
+if(!require(ROCR)) install.packages("ROCR")
+if(!require(randomForest)) install.packages("randomForest")
+```
+
+```{r libraries, echo=FALSE,include=FALSE,message=FALSE, warning=FALSE}
+# Load standard libraries
+
+library(tidyverse)
+library(dslabs)
+library(caret)
+library(dslabs)
+library(tidyverse)
+library(pdftools)
+library(lubridate)
+library(matrixStats)
+library(data.table)
+library(forcats)
+library(InformationValue)
+library(ROCR)
+library(randomForest)
+```
+```{r data load, echo=FALSE,include=FALSE}
+##############################################################################
+# Import data set
+##############################################################################
+
+## load  and view head of data file
+## This data is from the Kaggle list of curated datasets
+## https://www.kaggle.com/uciml/adult-census-income
+
+adult <- read_csv("C:/Users/haile/Desktop/DS_Capstone/adult.csv")
+
+```
+# Introduction
+
+The purpose of this project is to create several classifcation models for data related to individual income level.  In particular, we will consider numerical and categorical predictors for the outcome variable "income", which is binary with levels under/over \$50000.  We will use the data set "adult.csv".
+
+This is an extraction of 32,561 responses from the 1994 US Census data taken from the Kaggle list of curated datasets at https://www.kaggle.com/uciml/adult-census-income.
+
+# Exploratory Analysis
+
+Looking at a selection of rows and columns of the dataset gives a feel for it's form.
+
+```{r adult_head, echo=FALSE}
+head(adult)
+```
+
+The Kaggle website only gives the levels of the categorical variables or if numerical describes them as continuous.  However, we can reasonably infer their meaning as described below:
+
+1.  age:  numeric, age of the respondent.
+2.  workclass:  categorical, type of employment.
+3.  fnlwgt:  numeric, reflects the number of people in the population with the same attributes as the respondent entry.
+4.  education:  categorical, education level.
+5.  education.num: numeric, education level.
+6.  marital.status:  categorical, marital status.
+7.  occupation:  categorical, work occupation.
+8.  relationship:  categorical, reflects whether the individual has a familial relationship relative to another person in the household.
+9.  race:  categorical, description of race.
+10.  sex:  categorical, description of sex as male or female.
+11.  capital.gain:  numeric, reported capital gain in dollars.
+12.  capital.loss:  numeric, reported capital loss in dollars.
+13.  hours.per.week:  numeric, number of hours worked per week.
+14.  native.country:  categorical, country of origin.
+15.  income:  categorical binary, less or equal to $50000 or greater than $50000.
+
+The primary goal is to predict income (>50K or <=50K) using the other variables as predictors.  Looking at the distribution of incomes in the dataset,
+
+```{r count_income, echo=FALSE}
+## count of >=50K vs <50k
+adult %>% group_by(income) %>% summarize(count=n())
+```
+
+it looks that about 3/4 of respondents had income under \$50000, while 1/4 had income over this mark.  So from a naive perspective we could always just guess that someone had under \$50K income and we would have a 75% overall accuracy.  We will try to beat that.  
+
+## Identifying important predictors
+
+To find out which of the predictor variables are most helpful in classification, we will construct some basic tables and visualizations of the predictor variables with respect to income.
+
+For numeric variables we will construct histograms that indicate the distribution of the predictive variable along with the distribution of income.  For categorical variables we provide a summary two-way table indicating the count in each income group for each level of the variable.
+
+```{r hist_age,echo=FALSE}
+adult %>% ggplot()+aes(x=age,group=income,fill=income)+geom_histogram(binwidth=10)
+```
+
+This graph shows that "middle" ages are the highest proportion of workers and the most likely to have >50K income.
+
+```{r workclass1  , echo=FALSE}
+table(adult$workclass,adult$income)
+```
+
+We note in this table that there are missing data, denoted with "?", and some very small levels such as "never-worked" or worked "without-pay".  We will collapse these into a single level "other". 
+
+```{r workclass2  , echo=FALSE}
+## collapse a few small factors into a single factor
+adult$workclass<-adult$workclass %>% fct_collapse(other = c("Never-worked","Without-pay","?"))
+table(adult$workclass,adult$income)
+```
+
+This leaves us with a reasonable number of levels (seven) that all have a significant number of values relative to the size of the dataset.
+
+The graph of "fnlwgt" vs "income" shows the proportion of >50K to be fairly consistent for all the values, suggesting that this may not have much predictive value.
+
+```{r fnlwgt, echo=FALSE}
+adult %>% ggplot()+aes(x=fnlwgt,group=income,fill=income)+geom_histogram()
+```
+
+Looking at income relative to education 
+
+```{r education, echo=FALSE}
+table(adult$education,adult$income) 
+```
+
+we see that generally more education leads to a higher proportion of respondents making >50K.  This is seen more clearly by looking at the education.num variable, which converts the education levels to an numerical value, with higher values corresponding to a greater level of education.
+
+```{r education_num, echo=FALSE}
+table(adult$education.num,adult$income) 
+```
+
+Although there are many levels, because we can treat this as a numerical variable we will keep all.
+
+Next we consider marital status.
+
+```{r marital, echo=FALSE}
+#investigate marital status
+table(adult$marital.status,adult$income)
+```
+
+Here again, with seven levels and some small counts we will do some combining.  In particular the table seems to indicate that married (with spouse present) has a much higher proportion of income >50K than any category with individuals living alone, so we will collapse to two categories, married_together and not_together.
+
+```{r marital2 , echo=FALSE}
+## collapse into two factors
+adult$marital.status<-adult$marital.status %>% fct_collapse(married_together = c("Married-AF-spouse","Married-civ-spouse"),not_together=c("Divorced","Married-spouse-absent","Never-married","Separated","Widowed"))
+table(adult$marital.status,adult$income)
+```
+
+We face the same problem with occupation, many levels and some small counts,
+
+```{r occupation, echo=FALSE}
+table(adult$occupation,adult$income)
+```
+
+and so we will again combine fields.  There is certainly as much art as science in defining the new fields, but we perceive benefit in striving for a simpler model.  We will call our fields Blue_Collar (Craft-repair,Farming-fishing,Handlers-cleaners,Machine-op-inspct,Transport-moving, White_Collar (Adm-clerical,Sales,Tech-support,Protective-serv), Exec_mgr_prof (Exec-managerial,Prof-specialty), and Service_other (?, Armed-Forces, Other-service, Priv-house-serv)
+
+```{r occupation2,echo=FALSE}
+adult$occupation<-adult$occupation %>% fct_collapse(Blue_Collar=c("Craft-repair","Farming-fishing","Handlers-cleaners","Machine-op-inspct","Transport-moving"),White_Collar=c("Adm-clerical","Sales","Tech-support","Protective-serv"),Exec_mgr_prof=c("Exec-managerial","Prof-specialty"), Service_other =c("?", "Armed-Forces", "Other-service", "Priv-house-serv"))
+table(adult$occupation,adult$income)
+```
+
+
+In the next table we look at the variable relationship.  Considering how the proportions of >50K are considerably weighted toward those who are husbands and wives, it would seem this is redundant to marital status.
+
+```{r relationship, echo=FALSE}
+table(adult$relationship,adult$income)
+```
+
+Now we consider race and sex.  We say that race is largely white and sex is largely male, which may limit predictive value.  Although there are some race categories that have fairly small counts, there are only five levels overall so we will not combine.
+
+```{r race_and_sex, echo=FALSE}
+#investigate race
+table(adult$race,adult$income)
+
+#investigate sex
+table(adult$sex,adult$income)
+```
+
+The next variables considered together are capital gain and loss.  Some summary tables  of descriptive statistics show that while there is a wide range in dollar values (especially for capital gains), most respondents had value zero.
+
+```{r cap_gain_loss}
+summary(adult$capital.gain)
+sum(adult$capital.gain==0)/length(adult$capital.gain)
+summary(adult$capital.loss)
+sum(adult$capital.loss==0)/length(adult$capital.loss)
+```
+
+As a matter of fact, we see 92% and 95% of capital gains and losses, respectively, have zero values, making these variables that would likely have little predictive value.
+
+A histogram of hours worked per week
+
+```{r hours_worked,echo=FALSE}
+#histogram hours per week
+adult %>% ggplot()+aes(x=hours.per.week,group=income,fill=income)+geom_histogram(binwidth=5)
+```
+
+indicates (to no surprise) that most work around 40 hours per week, and few people working less than 40 hours earn more than 50K.
+
+Finally, we will look at the native country of the respondent.
+
+```{r native, echo=FALSE}
+#investigate native country
+table(adult$native.country,adult$income)
+```
+
+Because there is such a high proportion of those born in the United States and such a multitude of levels, we will (crudely) reduce to either born in the United States or born outside the United States.
+
+```{r native2, echo=FALSE}
+
+adult$native.country[adult$native.country!="United-States"]  <- "Outside_US" 
+adult$native.country[adult$native.country=="United-States"] <- "US" 
+table(adult$native.country,adult$income)
+```
+
+## Reduce Data set to important predictors
+
+Now that our initial investigations are done we will reduce the variables in the dataset.  In particular, we will eliminate fnlwgt, education (we will keep education.num instead), relationship (largely redundant with marital status), capital.gain and capital.loss (more than 90% zeros).
+
+```{r adult_reduced}
+#reduce the dataset for variables considered in model
+adult <- adult %>% select(age,workclass,education.num,marital.status,occupation,race,sex,hours.per.week,native.country,income)
+head(adult)
+```
+
+We convert income into a binary variable with income less than \$50000 assigned a zero and greater than or equal to \$50000 assigned one for use in some graphs.
+
+```{r binarize, echo=FALSE}
+## transform outcome variable income into binary variable with
+##   "<=50K" = 0 and ">50K" = 1
+
+ adult$income_b<-adult$income
+adult$income_b[adult$income == "<=50K"] <- 0
+ adult$income_b[adult$income == ">50K"] <- 1
+adult$income_b<-as.numeric(adult$income_b)
+```
+
+Finally, we split the data into a training and validation sets.  75% of the data is used in the training set and 25% is reserved for validation (testing).
+
+```{r training_validation_split, echo=FALSE}
+### split into training (train_set)/validation(test_set) of 75:25
+set.seed(1)
+test_index<-createDataPartition(adult$income,times=1,p=0.25,list=FALSE)
+
+train_set<-adult[-test_index, ]
+test_set<-adult[test_index, ]
+```
+
+# Models and Analysis
+
+## Classification Model:  General Linear Model (glm)
+
+The first classification model considered will be a binary logistic regression model using glm.  We will use all predictors in our reduced dataset.
+
+```{r mode1_glm}
+
+## GLM Binary Logistic Model
+
+default_glm_mod = train(
+  form = income ~ age+workclass+education.num+marital.status+occupation+race+sex+hours.per.week+native.country,
+  data = train_set,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial"
+)
+
+##GLM Model summary
+summary(default_glm_mod)
+
+```
+
+We see all the predictor variables are significant for at least some levels.  Next we produce the confusion matrix to see how well our model does in classification for the test set.
+
+```{r mod_glm_confusion}
+
+##confusion Matrix
+y_hat_glm<-predict(default_glm_mod, newdata = test_set)
+
+table(predicted=y_hat_glm,actual=test_set$income)
+```
+
+From the confusion matrix we compute standard accuracy and the F1 measure of accuracy.
+
+```{r mod_glm_accuracy}
+
+##accuracy
+calc_acc = function(actual, predicted) {
+  mean(actual == predicted)
+}
+
+acc_glm<-calc_acc(actual = test_set$income,
+         predicted = predict(default_glm_mod, newdata = test_set))
+
+f1_glm<-F_meas(factor(y_hat_glm),factor(test_set$income))
+```
+
+and graph the ROC curve
+
+```{r ROC, echo=FALSE}
+## ROC Curve
+
+## predict probabilities rather than binary
+p_hat_glm<-predict(default_glm_mod, newdata = test_set, type = "prob")
+
+pr1 <- prediction(p_hat_glm[2], test_set$income_b)
+prf_glm <- performance(pr1, measure = "tpr", x.measure = "fpr")
+plot(prf_glm)
+```
+
+## K Nearest neighbors (KNN)
+
+Next we turn to a knn model.  
+
+```{r knn}
+default_knn_mod = train(
+  income ~ age+workclass+education.num+marital.status+occupation+race+sex+hours.per.week+native.country,
+  data = train_set,
+  method = "knn",
+  trControl = trainControl(method = "cv", number = 5),
+  preProcess = c("center", "scale"),
+  tuneGrid = expand.grid(k = seq(23, 25, by = 2))
+)
+```
+
+We attempt to tune with various values of k, ultimately arriving at a best model of k = 23.
+
+```{r knn_best_k}
+default_knn_mod$finalModel
+```
+
+As before we compute accuracy
+
+```{r knn_accuracy}
+#knn accuracy
+
+calc_acc = function(actual, predicted) {
+  mean(actual == predicted)
+}
+acc_knn<-calc_acc(actual = test_set$income,
+         predicted = predict(default_knn_mod, newdata = test_set))
+acc_knn
+
+
+```
+
+and the confusion matrix and F1 measure,
+
+```{r confusion_knn}
+##confusion Matrix
+y_hat_knn<-predict(default_knn_mod, newdata = test_set)
+
+table(predicted=y_hat_knn,actual=test_set$income)
+
+f1_knn<-F_meas(factor(y_hat_knn),factor(test_set$income))
+f1_knn
+
+``` 
+
+as well as the ROC curve.
+
+```{r ROC_knn}
+## ROC Curve
+
+## predict probabilities rather than binary
+p_hat_knn<-predict(default_knn_mod, newdata = test_set, type = "prob")
+
+pr2 <- prediction(p_hat_knn[2], test_set$income_b)
+prf_knn <- performance(pr2, measure = "tpr", x.measure = "fpr")
+plot(prf_knn)
+```
+
+We see a slightly lower overall accuracy and sensitivity with knn compared to glm, although a slight improvement in specificity.
+
+## Random Forest
+
+Finally we consider a Random Forest model
+
+```{r factor_convert, echo=FALSE}
+## convert some factor variables as the algorithm was not running
+
+train_set$sex_f<-factor(train_set$sex)
+test_set$sex_f<-factor(test_set$sex)
+
+train_set$race_f<-factor(train_set$race)
+test_set$race_f<-factor(test_set$race)                         
+
+train_set$native.country_f<-factor(train_set$native.country)
+test_set$native.country_f<-factor(test_set$native.country)
+```
+
+```{r RandomForest}
+
+rf <- randomForest(as.factor(income) ~ age+workclass+education.num+marital.status+occupation+hours.per.week+sex_f+native.country_f+race_f, data = train_set, ntree = 1000)
+rf.pred.prob <- predict(rf, newdata = test_set, type = 'prob')
+rf.pred <- predict(rf, newdata = test_set, type = 'class')
+# confusion matrix 
+tb <- table(rf.pred, test_set$income)
+tb
+
+calc_acc = function(actual, predicted) {
+  mean(actual == predicted)
+}
+
+acc_rf<-calc_acc(actual = test_set$income,
+         predicted = predict(rf, newdata = test_set))
+acc_rf
+
+f1_rf<-F_meas(rf.pred,factor(test_set$income))
+f1_rf
+
+p_hat_rf<-as.data.frame(rf.pred.prob)
+pr3 <- prediction(p_hat_rf[2], test_set$income_b)
+prf_rf <- performance(pr3, measure = "tpr", x.measure = "fpr")
+plot(prf_rf)
+```
+
+We see that this model has an improved overall accuracy and F1 score over both the previous models.
+
+# Summary of Results
+
+We now summarize the results of the different models using overall accuracy and F1 score, the harmonic mean of precision and recall.
+
+```{r summ_results, echo=FALSE}
+acc_results<-bind_rows(
+  tibble(method="GLM",Accuracy = acc_glm,F1=f1_glm),
+  tibble(method="KNN",Accuracy = acc_knn,F1=f1_knn),
+  tibble(method="Random Forest",Accuracy = acc_rf,F1=f1_rf))
+
+ acc_results %>% knitr::kable()
+```
+
+Alternatively, we plot the ROC curves and compare the areas under the curve.
+
+```{r ROC_AUC, echo=FALSE}
+
+dd1 <- data.frame(FP = prf_glm@x.values[[1]], TP = prf_glm@y.values[[1]])
+dd2 <- data.frame(FP = prf_knn@x.values[[1]], TP = prf_knn@y.values[[1]])
+dd3 <- data.frame(FP = prf_rf@x.values[[1]], TP = prf_rf@y.values[[1]])
+
+g <- ggplot() + 
+  geom_line(data = dd1, aes(x = FP, y = TP, color = 'GLM')) + 
+  geom_line(data = dd2, aes(x = FP, y = TP, color = 'KNN')) + 
+  geom_line(data = dd3, aes(x = FP, y = TP, color = 'Random Forest')) +
+  ggtitle('ROC Curve') + 
+  labs(x = 'False Positive Rate', y = 'True Positive Rate') 
+g
+
+
+auc <- rbind(
+             performance(pr1, measure = 'auc')@y.values[[1]],
+             performance(pr2, measure = 'auc')@y.values[[1]],
+             performance(pr3, measure = 'auc')@y.values[[1]])
+             
+rownames(auc) <- (c('GLM', 'KNN', 
+                    'Random Forest'))
+colnames(auc) <- 'Area Under ROC Curve'
+round(auc, 4)
+```
+
+# Conclusion
+
+We see we get conflicting results.  By accuracy Random Forest > GLM > KNN, but by the ROC curve GLM > KNN > Random Forest.  Ultimately one might choose the GLM results just for the ease of interpretation and understandability.
+
+## Limitations
+ 
+ We combined some features and didn't consider others that might have somewhat improved the overall accuracy but would have led to longer runtimes on computationally intensive techniques.
+
+
